@@ -276,6 +276,7 @@ impl San {
             San::Castle(side) => pos.castling_moves(side, &mut legals),
             San::Put { role, to } => {
                 pos.san_candidates(role, to, &mut legals);
+                legals.push(Move::Put { role, to });
                 legals.retain(|m| match *m {
                     Move::Put { .. } => true,
                     _ => false,
