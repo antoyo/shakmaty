@@ -1234,6 +1234,156 @@ impl Position for Crazyhouse {
     fn variant_outcome(&self) -> Option<Outcome> { None }
 }
 
+/// A Bughouse position.
+#[derive(Clone, Debug, Default)]
+pub struct Bughouse {
+    chess: Chess,
+    pockets: Material,
+}
+
+impl Bughouse {
+    fn our_pocket(&self) -> &MaterialSide {
+        self.pockets.by_color(self.turn())
+    }
+
+    fn our_pocket_mut(&mut self) -> &mut MaterialSide {
+        let turn = self.turn();
+        self.pockets.by_color_mut(turn)
+    }
+
+    fn legal_put_squares(&self) -> Bitboard {
+        let checkers = self.checkers();
+
+        if checkers.is_empty() {
+            !self.board().occupied()
+        } else if let Some(checker) = checkers.single_square() {
+            let king = self.board().king_of(self.turn()).expect("king in crazyhouse");
+            attacks::between(checker, king)
+        } else {
+            Bitboard(0)
+        }
+    }
+}
+
+impl Setup for Bughouse {
+    fn board(&self) -> &Board { self.chess.board() }
+    fn pockets(&self) -> Option<&Material> { Some(&self.pockets) }
+    fn turn(&self) -> Color { self.chess.turn() }
+    fn castling_rights(&self) -> Bitboard { self.chess.castling_rights() }
+    fn ep_square(&self) -> Option<Square> { self.chess.ep_square() }
+    fn remaining_checks(&self) -> Option<&RemainingChecks> { None }
+    fn halfmoves(&self) -> u32 { self.chess.halfmoves() }
+    fn fullmoves(&self) -> u32 { self.chess.fullmoves() }
+}
+
+impl FromSetup for Bughouse {
+    fn from_setup(setup: &dyn Setup) -> Result<Bughouse, PositionError> {
+        Chess::from_setup(setup).and_then(|chess| {
+            let pockets = setup.pockets().cloned().unwrap_or_default();
+            if pockets.count().saturating_add(chess.board().occupied().count()) > 64 {
+                Err(PositionError::VARIANT)
+            } else if pockets.white.kings > 0 || pockets.black.kings > 0 {
+                Err(PositionError::TOO_MANY_KINGS)
+            } else {
+                Ok(Bughouse { chess, pockets })
+            }
+        })
+    }
+}
+
+impl Position for Bughouse {
+    fn play_unchecked(&mut self, m: &Move) {
+        match *m {
+            Move::Normal { capture: Some(capture), to, .. } => {
+                let capture = if self.board().promoted().contains(to) {
+                    Role::Pawn
+                } else {
+                    capture
+                };
+            }
+            Move::Put { role, .. } => {
+                *self.our_pocket_mut().by_role_mut(role) -= 1;
+            }
+            _ => {}
+        }
+
+        self.chess.play_unchecked(m);
+    }
+
+    fn castles(&self) -> &Castles {
+        self.chess.castles()
+    }
+
+    fn legal_moves(&self, moves: &mut MoveList) {
+        self.chess.legal_moves(moves);
+
+        let pocket = self.our_pocket();
+        let targets = self.legal_put_squares();
+
+        for to in targets {
+            for &role in &[Role::Knight, Role::Bishop, Role::Rook, Role::Queen] {
+                if pocket.by_role(role) > 0 {
+                    moves.push(Move::Put { role, to });
+                }
+            }
+        }
+
+        if pocket.pawns > 0 {
+            for to in targets & !Bitboard::BACKRANKS {
+                moves.push(Move::Put { role: Role::Pawn, to });
+            }
+        }
+    }
+
+    fn castling_moves(&self, side: CastlingSide, moves: &mut MoveList) {
+        self.chess.castling_moves(side, moves);
+    }
+
+    fn en_passant_moves(&self, moves: &mut MoveList) {
+        self.chess.en_passant_moves(moves);
+    }
+
+    fn san_candidates(&self, role: Role, to: Square, moves: &mut MoveList) {
+        self.chess.san_candidates(role, to, moves);
+
+        if self.our_pocket().by_role(role) > 0 && self.legal_put_squares().contains(to) &&
+           (role != Role::Pawn || !Bitboard::BACKRANKS.contains(to))
+        {
+            moves.push(Move::Put { role, to });
+        }
+    }
+
+    fn is_irreversible(&self, m: &Move) -> bool {
+        match *m {
+            Move::Castle { .. } => true,
+            Move::Normal { role, from, to, .. } =>
+                self.castling_rights().contains(from) ||
+                self.castling_rights().contains(to) ||
+                (role == Role::King && self.chess.castles.has_side(self.turn())),
+            _ => false,
+        }
+    }
+
+    fn has_insufficient_material(&self, _color: Color) -> bool {
+        // In practise no material can leave the game, but this is simple
+        // to implement anyway. Bishops can be captured and put onto a
+        // different color complex.
+        self.board().occupied().count() + self.pockets.count() <= 3 &&
+        self.board().promoted().is_empty() &&
+        self.board().pawns().is_empty() &&
+        self.board().rooks_and_queens().is_empty() &&
+        self.pockets.white.pawns == 0 &&
+        self.pockets.black.pawns == 0 &&
+        self.pockets.white.rooks == 0 &&
+        self.pockets.black.rooks == 0 &&
+        self.pockets.white.queens == 0 &&
+        self.pockets.black.queens == 0
+    }
+
+    fn is_variant_end(&self) -> bool { false }
+    fn variant_outcome(&self) -> Option<Outcome> { None }
+}
+
 /// A Racing Kings position.
 #[derive(Clone, Debug)]
 pub struct RacingKings {

@@ -74,7 +74,7 @@ mod square;
 mod types;
 mod material;
 mod board;
-mod position;
+pub mod position;
 mod setup;
 mod movelist;
 mod magics;
